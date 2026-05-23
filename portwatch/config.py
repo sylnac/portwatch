@@ -1,55 +1,71 @@
-"""Configuration loader for portwatch."""
+"""Configuration loading and defaults for portwatch."""
 
 from __future__ import annotations
 
-import json
-import os
+import tomllib
 from dataclasses import dataclass, field
-from typing import List
+from pathlib import Path
+from typing import Any
 
-DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/portwatch/config.json")
+DEFAULT_CONFIG_PATH = Path("/etc/portwatch/config.toml")
+
+DEFAULT_TOML = """\
+[portwatch]
+interval = 30          # seconds between snapshots
+baseline_file = "/var/lib/portwatch/baseline.json"
+
+[portwatch.allowed]
+# List allowed bindings as [[proto, port]] pairs, e.g.:
+# ports = [["tcp", 22], ["tcp", 80], ["tcp", 443]]
+ports = []
+
+[portwatch.alert]
+# type = "logging"   # options: logging | email | exec
+type = "logging"
+
+# --- email example ---
+# type = "email"
+# smtp_host = "mail.example.com"
+# smtp_port = 465
+# sender = "portwatch@example.com"
+# recipient = "admin@example.com"
+# use_tls = true
+
+# --- exec example ---
+# type = "exec"
+# command = ["notify-send", "portwatch alert"]
+"""
 
 
 @dataclass
 class Config:
-    """Runtime configuration for the portwatch daemon."""
-
-    poll_interval: float = 5.0  # seconds between snapshots
-    allowed_ports: List[int] = field(default_factory=list)  # ports never alerted on
-    log_file: str = "/var/log/portwatch.log"
-    alert_on_removal: bool = False
+    interval: int = 30
+    baseline_file: Path = Path("/var/lib/portwatch/baseline.json")
+    allowed_ports: list[tuple[str, int]] = field(default_factory=list)
+    alert: dict[str, Any] = field(default_factory=lambda: {"type": "logging"})
 
 
-def load_config(path: str = DEFAULT_CONFIG_PATH) -> Config:
-    """Load configuration from a JSON file, falling back to defaults."""
-    if not os.path.exists(path):
+def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
+    """Load configuration from a TOML file."""
+    if not path.exists():
         return Config()
 
-    with open(path, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+
+    pw = data.get("portwatch", {})
+    allowed_raw = pw.get("allowed", {}).get("ports", [])
+    allowed_ports = [(proto, int(port)) for proto, port in allowed_raw]
 
     return Config(
-        poll_interval=float(data.get("poll_interval", 5.0)),
-        allowed_ports=list(data.get("allowed_ports", [])),
-        log_file=str(data.get("log_file", "/var/log/portwatch.log")),
-        alert_on_removal=bool(data.get("alert_on_removal", False)),
+        interval=int(pw.get("interval", 30)),
+        baseline_file=Path(pw.get("baseline_file", "/var/lib/portwatch/baseline.json")),
+        allowed_ports=allowed_ports,
+        alert=pw.get("alert", {"type": "logging"}),
     )
 
 
-def save_default_config(path: str = DEFAULT_CONFIG_PATH) -> None:
-    """Write a default config file to *path* if it does not already exist."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if os.path.exists(path):
-        return
-    cfg = Config()
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(
-            {
-                "poll_interval": cfg.poll_interval,
-                "allowed_ports": cfg.allowed_ports,
-                "log_file": cfg.log_file,
-                "alert_on_removal": cfg.alert_on_removal,
-            },
-            fh,
-            indent=2,
-        )
+def save_default_config(path: Path = DEFAULT_CONFIG_PATH) -> None:
+    """Write the default TOML config to *path* (creates parent dirs)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(DEFAULT_TOML, encoding="utf-8")
