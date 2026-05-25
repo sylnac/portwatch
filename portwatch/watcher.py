@@ -50,7 +50,12 @@ class Watcher:
 
     def tick(self) -> Optional[SnapshotDiff]:
         """Perform a single poll cycle. Returns a diff if changes were found."""
-        current = capture_snapshot()
+        try:
+            current = capture_snapshot()
+        except Exception:
+            logger.exception("Failed to capture port snapshot; skipping cycle.")
+            return None
+
         if self._last_snapshot is None:
             self._last_snapshot = current
             logger.info("Initial snapshot captured (%d entries).", len(current.entries))
